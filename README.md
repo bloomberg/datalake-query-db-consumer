@@ -25,12 +25,11 @@ To run the service locally, along with supporting services for testing, just run
 Similarly, for tests run `docker-compose run tests`.
 
 ## Building
-
-WARNING: This follows sqlalchemy's approach of not packaging DbAPIs, instead letting the user install
+:warning: WARNING: This follows sqlalchemy's approach of not packaging DbAPIs, instead letting the user install
 the appropiate ones for their use case. This is specified in Dockerfile by the `SQLALCHEMY_DEPENDENCIES`
 argument.
 
-To build this service use `docker build --build-arg SQLALCHEMY_DEPENDENCIES=psycopg2-binary -f Dockerfile -t bloomberg/datalakequerydbconsumer:latest-postgresql .`
+To build, run `docker build --build-arg SQLALCHEMY_DEPENDENCIES=psycopg2-binary -f Dockerfile -t bloomberg/datalakequerydbconsumer:latest-postgresql .`
 
 OR
 

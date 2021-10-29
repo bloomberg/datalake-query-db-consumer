@@ -20,3 +20,4 @@ __pycache__/
 .tox
 
 .pre-commit
+_version.py
