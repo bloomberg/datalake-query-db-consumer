@@ -1,0 +1,123 @@
+version: '3.7'
+services:
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    ports:
+      - 22181:2181
+
+  local_kafka:
+    image: wurstmeister/kafka:latest
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_HOST_NAME: local_kafka
+      KAFKA_ADVERTISED_PORT: 9092
+      KAFKA_CREATE_TOPICS: "kf-datalake-query-events:4:1:delete"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --topic kf-datalake-query-events --describe"]
+      start_period: 20s
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:latest
+    environment:
+      # - POSTGRES_PASSWORD=foobar
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - "./datalake-metrics-db/docker-entrypoint-initdb.d.psql:/docker-entrypoint-initdb.d"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datalake_analytics_admin -d datalake_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:latest
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "true"
+      MYSQL_ROOT_PASSWORD: ""
+    volumes:
+    - "./datalake-metrics-db/docker-entrypoint-initdb.d.mysql:/docker-entrypoint-initdb.d"
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/bin/mysql -u root -e \"SHOW DATABASES;\" datalake_analytics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-migration:
+    build:
+      context: datalake-metrics-db
+      dockerfile: Dockerfile
+      args:
+        SQLALCHEMY_DEPENDENCIES: psycopg2-binary
+    command: sh -c "alembic -c alembic.local.ini upgrade head"
+    working_dir: /migrations
+    volumes:
+      - ./datalake-metrics-db:/migrations:z
+    environment:
+      - SQLALCHEMY_URL=postgresql://raw_metrics_rw:foobar@postgres/datalake_analytics
+      - PYTHONDONTWRITEBYTECODE=true
+    depends_on:
+      postgres:
+        condition: "service_healthy"
+
+  mysql-migration:
+    build:
+      context: datalake-metrics-db
+      dockerfile: Dockerfile
+      args:
+        SQLALCHEMY_DEPENDENCIES: cryptography pymysql
+    command: sh -c "alembic -c alembic.local.ini upgrade head"
+    working_dir: /migrations
+    volumes:
+      - ./datalake-metrics-db:/migrations:z
+    environment:
+      - SQLALCHEMY_URL=mysql+pymysql://root@mysql/datalake_analytics
+      - PYTHONDONTWRITEBYTECODE=true
+    depends_on:
+      mysql:
+        condition: "service_healthy"
+
+  datalakequerydbconsumer-postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SQLALCHEMY_DEPENDENCIES: psycopg2-binary
+    image: bloomberg/datalakequerydbconsumer:latest-postgresql
+    environment:
+      KAFKA_BROKERS: "local_kafka:9092"
+      DATALAKEQUERYDBCONSUMER_KAFKA_TOPIC: kf-datalake-query-events
+      DATALAKEQUERYDBCONSUMER_KAFKA_GROUP_ID: foobar
+      DATALAKEQUERYDBCONSUMER_DB_URL: "postgresql://raw_metrics_rw:foobar@postgres:5432/datalake_analytics"
+    depends_on:
+      postgres-migration:
+        condition: "service_completed_successfully"
+      local_kafka:
+        condition: "service_started"
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/datalakequerydbconsumer
+    entrypoint:
+      - tox
+    environment:
+      PRE_COMMIT_HOME: ./.pre-commit
+      KAFKA_BROKERS: "local_kafka:9092"
+      DATALAKEQUERYDBCONSUMER_KAFKA_TOPIC: kf-datalake-query-events
+      DATALAKEQUERYDBCONSUMER_KAFKA_GROUP_ID: foobar
+    depends_on:
+      mysql-migration:
+        condition: "service_completed_successfully"
+      postgres-migration:
+        condition: "service_completed_successfully"
+      local_kafka:
+        condition: "service_started"

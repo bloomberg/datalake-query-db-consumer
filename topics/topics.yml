@@ -1,0 +1,8 @@
+---
+topics:
+ - topic: kf-datalake-query-events
+   partitions: 4
+   cleanup_policy: "delete"
+   retention_hours: 24
+   retention_megabytes: 5120
+   max_message_megabytes: 1

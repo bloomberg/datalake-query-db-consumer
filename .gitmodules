@@ -1,0 +1,3 @@
+[submodule "datalake-metrics-db"]
+	path = datalake-metrics-db
+	url = https://github.com/bloomberg/datalake-metrics-db.git
