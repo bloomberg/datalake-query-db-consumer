@@ -15,7 +15,7 @@
 
 ## Rationale
 
-The purpose of this service and its [Docker image](link_to_dockerhub) is to provide a way of consuming Kafka messages produced by [datalake-query-ingester](link_to_datalakequeryingester) and storing them in a relational database for long-term storage and analysis.
+The purpose of this service is to provide a way of consuming Kafka messages produced by [datalake-query-ingester](link_to_datalakequeryingester) and storing them in a relational database for long-term storage and analysis.
 
 This is part of a datalake query metadata ingestion and analysis pipeline. You can find more about that [here](to_be_added).
 
@@ -26,13 +26,11 @@ Similarly, for tests run `docker-compose run tests`.
 
 ## Building
 
-We provide built images for all versions [here](https://hub.docker.com/u/bloomberg).
-
 WARNING: This follows sqlalchemy's approach of not packaging DbAPIs, instead letting the user install
 the appropiate ones for their use case. This is specified in Dockerfile by the `SQLALCHEMY_DEPENDENCIES`
 argument.
 
-If you wish to build it yourself use `docker build --build-arg SQLALCHEMY_DEPENDENCIES=psycopg2-binary -f Dockerfile -t bloomberg/datalakequerydbconsumer:latest-postgresql .`
+To build this service use `docker build --build-arg SQLALCHEMY_DEPENDENCIES=psycopg2-binary -f Dockerfile -t bloomberg/datalakequerydbconsumer:latest-postgresql .`
 
 OR
 
