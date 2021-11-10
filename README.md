@@ -15,9 +15,9 @@
 
 ## Rationale
 
-The purpose of this service is to provide a way of consuming Kafka messages produced by [datalake-query-ingester](link_to_datalakequeryingester) and storing them in a relational database for long-term storage and analysis.
+The purpose of this service is to provide a way of consuming Kafka messages produced by [datalake-query-ingester](https://github.com/bloomberg/datalake-query-ingester) and storing them in a relational database for long-term storage and analysis.
 
-This is part of a datalake query metadata ingestion and analysis pipeline. You can find more about that [here](to_be_added).
+This is part of a datalake query metadata ingestion and analysis pipeline.
 
 ## Quick Start
 
