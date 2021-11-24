@@ -17,6 +17,8 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v1
+      with:
+        submodules: recursive
 
     - name: Build Containers
       run: docker-compose build --no-cache --pull
