@@ -97,8 +97,12 @@ def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:
         return datetime.fromtimestamp(float(field))
     elif isinstance(field, str):
         return parser.parse(field)
-    else:
+    elif isinstance(field, datetime):
         return field
+    else:
+        raise TypeError(
+            f"Invalid argument: {field=} should be a string, integer, float or datetime object, not {type(field)}"
+        )
 
 
 def get_query_metrics_from_raw(raw_metrics: dict[str, Any]) -> QueryMetrics:
