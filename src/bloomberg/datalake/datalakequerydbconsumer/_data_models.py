@@ -20,6 +20,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, TypeVar
 
+from dateutil import parser
 from sqlalchemy import Column, DateTime, Float, Integer, String
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.schema import ForeignKey
@@ -52,7 +53,7 @@ class QueryMetrics(Base):  # type: ignore
     planningTime = Column("planningTime", Float)
     executionTime = Column("executionTime", Float)
     peakUserMemoryBytes = Column("peakUserMemoryBytes", BigInteger)
-    peakTotalNonRevocableMemoryBytes = Column("peakTotalNonRevocableMemoryBytes", BigInteger)
+    peakTotalNonRevocableMemoryBytes = Column("peakTotalNonRevocableMemoryBytes", BigInteger, nullable=True)
     peakTaskUserMemory = Column("peakTaskUserMemory", BigInteger)
     peakTaskTotalMemory = Column("peakTaskTotalMemory", BigInteger)
     physicalInputBytes = Column("physicalInputBytes", BigInteger)
@@ -89,6 +90,17 @@ class ColumnMetrics(Base):  # type: ignore
     __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
 
 
+def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:
+    if isinstance(field, float):
+        return datetime.fromtimestamp(field)
+    elif isinstance(field, int):
+        return datetime.fromtimestamp(float(field))
+    elif isinstance(field, str):
+        return parser.parse(field)
+    else:
+        return field
+
+
 def get_query_metrics_from_raw(raw_metrics: dict[str, Any]) -> QueryMetrics:
     return QueryMetrics(
         queryId=raw_metrics["metadata"]["queryId"],
@@ -110,7 +122,7 @@ def get_query_metrics_from_raw(raw_metrics: dict[str, Any]) -> QueryMetrics:
         planningTime=raw_metrics["statistics"]["planningTime"],
         executionTime=raw_metrics["statistics"]["executionTime"],
         peakUserMemoryBytes=raw_metrics["statistics"]["peakUserMemoryBytes"],
-        peakTotalNonRevocableMemoryBytes=raw_metrics["statistics"]["peakTotalNonRevocableMemoryBytes"],
+        peakTotalNonRevocableMemoryBytes=raw_metrics["statistics"].get("peakTotalNonRevocableMemoryBytes"),
         peakTaskUserMemory=raw_metrics["statistics"]["peakTaskUserMemory"],
         peakTaskTotalMemory=raw_metrics["statistics"]["peakTaskTotalMemory"],
         physicalInputBytes=raw_metrics["statistics"]["physicalInputBytes"],
@@ -126,9 +138,9 @@ def get_query_metrics_from_raw(raw_metrics: dict[str, Any]) -> QueryMetrics:
         cumulativeMemory=raw_metrics["statistics"]["cumulativeMemory"],
         completedSplits=raw_metrics["statistics"]["completedSplits"],
         resourceWaitingTime=raw_metrics["statistics"]["resourceWaitingTime"],
-        createTime=datetime.fromtimestamp(raw_metrics["createTime"]),
-        executionStartTime=datetime.fromtimestamp(raw_metrics["executionStartTime"]),
-        endTime=datetime.fromtimestamp(raw_metrics["endTime"]),
+        createTime=_get_datetime_from_field(raw_metrics["createTime"]),
+        executionStartTime=_get_datetime_from_field(raw_metrics["executionStartTime"]),
+        endTime=_get_datetime_from_field(raw_metrics["endTime"]),
     )
 
 
