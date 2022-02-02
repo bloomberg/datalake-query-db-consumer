@@ -252,3 +252,52 @@ def test_str_or_float_timestamps(session: Session):
     assert result.createTime == datetime.fromtimestamp(1626773622)
     assert result.executionStartTime == datetime.fromtimestamp(1626773634)
     assert result.endTime == datetime.fromtimestamp(1626773734)
+
+
+@pytest.mark.usefixtures("_cleanup")
+def test_duplicate_columns(session: Session):
+    # Given
+    (_query_id, _raw_metrics) = get_raw_metrics()
+    # Duplicate first input table
+    _raw_metrics["ioMetadata"]["inputs"].append(_raw_metrics["ioMetadata"]["inputs"][0])
+
+    # When
+    _add_query_metrics(_raw_metrics)
+    _add_column_metrics(_raw_metrics)
+
+    # Then
+    result = (
+        session.query(ColumnMetrics)
+        .order_by(ColumnMetrics.catalogName.asc())
+        .order_by(ColumnMetrics.schemaName.asc())
+        .order_by(ColumnMetrics.tableName.asc())
+        .order_by(ColumnMetrics.columnName.asc())
+        .filter_by(queryId=_query_id)
+        .all()
+    )
+
+    assert len(result) == 3
+
+    assert result[0].queryId == _query_id
+    assert result[0].catalogName == "postgresql"
+    assert result[0].schemaName == "test-schema"
+    assert result[0].tableName == "test-table-1"
+    assert result[0].columnName == "test-column-1_1"
+    assert result[0].physicalInputBytes == 0
+    assert result[0].physicalInputRows == 1135200
+
+    assert result[1].queryId == _query_id
+    assert result[1].catalogName == "postgresql"
+    assert result[1].schemaName == "test-schema"
+    assert result[1].tableName == "test-table-1"
+    assert result[1].columnName == "test-column-1_2"
+    assert result[1].physicalInputBytes == 0
+    assert result[1].physicalInputRows == 1135200
+
+    assert result[2].queryId == _query_id
+    assert result[2].catalogName == "postgresql"
+    assert result[2].schemaName == "test-schema"
+    assert result[2].tableName == "test-table-2"
+    assert result[2].columnName == "test-column-2_1"
+    assert result[2].physicalInputBytes == 0
+    assert result[2].physicalInputRows == 2
