@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from dateutil import parser
 from sqlalchemy import Column, DateTime, Float, Integer, String
@@ -89,6 +89,21 @@ class ColumnMetrics(Base):  # type: ignore
 
     __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
 
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, ColumnMetrics):
+            return False
+        return cast(
+            bool,
+            self.queryId == other.queryId
+            and self.catalogName == other.catalogName
+            and self.schemaName == other.schemaName
+            and self.tableName == other.tableName
+            and self.columnName == other.columnName,
+        )
+
+    def __hash__(self) -> int:
+        return hash(frozenset([self.queryId, self.catalogName, self.schemaName, self.tableName, self.columnName]))
+
 
 def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:
     if isinstance(field, float):
@@ -149,7 +164,7 @@ def get_query_metrics_from_raw(raw_metrics: dict[str, Any]) -> QueryMetrics:
 
 
 def get_column_metrics_from_raw(raw_metrics: dict[str, Any]) -> list[ColumnMetrics]:
-    return [
+    column_metrics = [
         ColumnMetrics(
             queryId=raw_metrics["metadata"]["queryId"],
             catalogName=table["catalogName"],
@@ -162,3 +177,6 @@ def get_column_metrics_from_raw(raw_metrics: dict[str, Any]) -> list[ColumnMetri
         for table in raw_metrics["ioMetadata"]["inputs"]
         for column in table["columns"]
     ]
+
+    # Trino may send a column multiple times with the same information
+    return list(dict.fromkeys(column_metrics))
