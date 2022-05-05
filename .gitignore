@@ -21,3 +21,7 @@ __pycache__/
 
 .pre-commit
 _version.py
+
+# virtual environment
+env
+venv
