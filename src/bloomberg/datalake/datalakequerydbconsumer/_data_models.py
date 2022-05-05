@@ -18,10 +18,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from json import loads
 from typing import Any, TypeVar, cast
 
 from dateutil import parser
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, UnicodeText
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.schema import ForeignKey
 from sqlalchemy.sql.sqltypes import BigInteger
@@ -45,13 +46,23 @@ class QueryMetrics(Base):  # type: ignore
     serverVersion = Column("serverVersion", String(100))
     environment = Column("environment", String(10))
     queryType = Column("queryType", String(50))
+    uri = Column("uri", String(255), nullable=True)
+    plan = Column("plan", UnicodeText, nullable=True)
+    payload = Column("paylod", JSON(none_as_null=True), nullable=True)
+    sessionProperties = Column("sessionProperties", JSON(none_as_null=True), nullable=True)
     cpuTime = Column("cpuTime", Float)
+    failedCpuTime = Column("failedCpuTime", Float, nullable=True)
     wallTime = Column("wallTime", Float)
     queuedTime = Column("queuedTime", Float)
     scheduledTime = Column("scheduledTime", Float)
+    failedScheduledTime = Column("failedScheduledTime", Float, nullable=True)
     analysisTime = Column("analysisTime", Float)
     planningTime = Column("planningTime", Float)
     executionTime = Column("executionTime", Float)
+    inputBlockedTime = Column("inputBlockedTime", Float, nullable=True)
+    failedInputBlockedTime = Column("failedInputBlockedTime", Float, nullable=True)
+    outputBlockedTime = Column("outputBlockedTime", Float, nullable=True)
+    failedOutputBlockedTime = Column("failedOutputBlockedTime", Float, nullable=True)
     peakUserMemoryBytes = Column("peakUserMemoryBytes", BigInteger)
     peakTotalNonRevocableMemoryBytes = Column("peakTotalNonRevocableMemoryBytes", BigInteger, nullable=True)
     peakTaskUserMemory = Column("peakTaskUserMemory", BigInteger)
@@ -66,9 +77,12 @@ class QueryMetrics(Base):  # type: ignore
     outputRows = Column("outputRows", BigInteger)
     writtenBytes = Column("writtenBytes", BigInteger)
     writtenRows = Column("writtenRows", BigInteger)
+    processedInputBytes = Column("processedInputBytes", BigInteger, nullable=True)
+    processedInputRows = Column("processedInputRows", BigInteger, nullable=True)
     cumulativeMemory = Column("cumulativeMemory", Float)
     completedSplits = Column("completedSplits", Integer)
     resourceWaitingTime = Column("resourceWaitingTime", Float)
+    planNodeStatsAndCosts = Column("planNodeStatsAndCosts", JSON(none_as_null=True), nullable=True)
     createTime = Column("createTime", DateTime)
     executionStartTime = Column("executionStartTime", DateTime)
     endTime = Column("endTime", DateTime)
@@ -105,6 +119,61 @@ class ColumnMetrics(Base):  # type: ignore
         return hash(frozenset([self.queryId, self.catalogName, self.schemaName, self.tableName, self.columnName]))
 
 
+class ClientTags(Base):  # type: ignore
+
+    __tablename__ = "client_tags"
+
+    queryId = Column("queryId", String(100), ForeignKey(QueryMetrics.queryId), primary_key=True)
+    clientTag = Column("clientTag", String(255), primary_key=True)
+
+    __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, ColumnMetrics):
+            return False
+        return cast(bool, self.queryId == other.queryId and self.clientTag == other.clientTag)
+
+    def __hash__(self) -> int:
+        return hash(frozenset([self.queryId, self.clientTag]))
+
+
+class ResourceGroups(Base):  # type: ignore
+
+    __tablename__ = "resource_groups"
+
+    queryId = Column("queryId", String(100), ForeignKey(QueryMetrics.queryId), primary_key=True)
+    resourceGroup = Column("resourceGroup", String(255), primary_key=True)
+
+    __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, ColumnMetrics):
+            return False
+        return cast(bool, self.queryId == other.queryId and self.resourceGroup == other.resourceGroup)
+
+    def __hash__(self) -> int:
+        return hash(frozenset([self.queryId, self.resourceGroup]))
+
+
+class OperatorSummaries(Base):  # type: ignore
+
+    __tablename__ = "operator_summaries"
+
+    queryId = Column("queryId", String(100), ForeignKey(QueryMetrics.queryId), primary_key=True)
+    id = Column("id", BigInteger, autoincrement=True, primary_key=True)
+    operatorSummary = Column("operatorSummary", JSON(none_as_null=True), nullable=False)
+
+    __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, ColumnMetrics):
+            return False
+        return cast(bool, self.queryId == other.queryId and self.id == other.id)
+
+    def __hash__(self) -> int:
+        return hash(frozenset([self.queryId, self.id]))
+
+
 def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:
     if isinstance(field, float):
         return datetime.fromtimestamp(field)
@@ -120,43 +189,75 @@ def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:
         )
 
 
+def _unique(dl: list[T]) -> list[T]:
+    """
+    Returns the set of unique elements from a list
+
+    Comparing elements is done with: x == y iff hash(x) == hash(y)
+    """
+    return list(dict.fromkeys(dl))
+
+
+def _load_json(s: str | bytes | None, *args: Any, **kwargs: Any) -> Any:
+    """
+    Wrapper aroud json.loads to handle None
+    """
+    if s:
+        return loads(s, *args, **kwargs)
+    else:
+        return None
+
+
 def get_query_metrics_from_raw(raw_metrics: dict[str, Any]) -> QueryMetrics:
     return QueryMetrics(
         queryId=raw_metrics["metadata"]["queryId"],
-        transactionId=raw_metrics["metadata"]["transactionId"],
-        query=raw_metrics["metadata"]["query"],
-        queryType=raw_metrics["context"]["queryType"],
-        remoteClientAddress=raw_metrics["context"]["remoteClientAddress"],
-        user=raw_metrics["context"]["user"],
-        userAgent=raw_metrics["context"]["userAgent"],
-        source=raw_metrics["context"]["source"],
-        serverAddress=raw_metrics["context"]["serverAddress"],
-        serverVersion=raw_metrics["context"]["serverVersion"],
-        environment=raw_metrics["context"]["environment"],
-        cpuTime=raw_metrics["statistics"]["cpuTime"],
-        wallTime=raw_metrics["statistics"]["wallTime"],
-        queuedTime=raw_metrics["statistics"]["queuedTime"],
-        scheduledTime=raw_metrics["statistics"]["scheduledTime"],
-        analysisTime=raw_metrics["statistics"]["analysisTime"],
-        planningTime=raw_metrics["statistics"]["planningTime"],
-        executionTime=raw_metrics["statistics"]["executionTime"],
-        peakUserMemoryBytes=raw_metrics["statistics"]["peakUserMemoryBytes"],
+        transactionId=raw_metrics["metadata"].get("transactionId"),
+        query=raw_metrics["metadata"].get("query"),
+        uri=raw_metrics["metadata"].get("uri"),
+        plan=raw_metrics["metadata"].get("plan"),
+        payload=_load_json(raw_metrics["metadata"].get("payload")),
+        queryType=raw_metrics["context"].get("queryType"),
+        remoteClientAddress=raw_metrics["context"].get("remoteClientAddress"),
+        user=raw_metrics["context"].get("user"),
+        userAgent=raw_metrics["context"].get("userAgent"),
+        source=raw_metrics["context"].get("source"),
+        serverAddress=raw_metrics["context"].get("serverAddress"),
+        serverVersion=raw_metrics["context"].get("serverVersion"),
+        environment=raw_metrics["context"].get("environment"),
+        sessionProperties=raw_metrics["context"].get("sessionProperties"),
+        cpuTime=raw_metrics["statistics"].get("cpuTime"),
+        failedCpuTime=raw_metrics["statistics"].get("failedCpuTime"),
+        wallTime=raw_metrics["statistics"].get("wallTime"),
+        queuedTime=raw_metrics["statistics"].get("queuedTime"),
+        scheduledTime=raw_metrics["statistics"].get("scheduledTime"),
+        failedScheduledTime=raw_metrics["statistics"].get("failedScheduledTime"),
+        analysisTime=raw_metrics["statistics"].get("analysisTime"),
+        planningTime=raw_metrics["statistics"].get("planningTime"),
+        executionTime=raw_metrics["statistics"].get("executionTime"),
+        inputBlockedTime=raw_metrics["statistics"].get("inputBlockedTime"),
+        failedInputBlockedTime=raw_metrics["statistics"].get("failedInputBlockedTime"),
+        outputBlockedTime=raw_metrics["statistics"].get("outputBlockedTime"),
+        failedOutputBlockedTime=raw_metrics["statistics"].get("failedOutputBlockedTime"),
+        peakUserMemoryBytes=raw_metrics["statistics"].get("peakUserMemoryBytes"),
         peakTotalNonRevocableMemoryBytes=raw_metrics["statistics"].get("peakTotalNonRevocableMemoryBytes"),
-        peakTaskUserMemory=raw_metrics["statistics"]["peakTaskUserMemory"],
-        peakTaskTotalMemory=raw_metrics["statistics"]["peakTaskTotalMemory"],
-        physicalInputBytes=raw_metrics["statistics"]["physicalInputBytes"],
-        physicalInputRows=raw_metrics["statistics"]["physicalInputRows"],
-        internalNetworkBytes=raw_metrics["statistics"]["internalNetworkBytes"],
-        internalNetworkRows=raw_metrics["statistics"]["internalNetworkRows"],
-        totalBytes=raw_metrics["statistics"]["totalBytes"],
-        totalRows=raw_metrics["statistics"]["totalRows"],
-        outputBytes=raw_metrics["statistics"]["outputBytes"],
-        outputRows=raw_metrics["statistics"]["outputRows"],
-        writtenBytes=raw_metrics["statistics"]["writtenBytes"],
-        writtenRows=raw_metrics["statistics"]["writtenRows"],
-        cumulativeMemory=raw_metrics["statistics"]["cumulativeMemory"],
-        completedSplits=raw_metrics["statistics"]["completedSplits"],
-        resourceWaitingTime=raw_metrics["statistics"]["resourceWaitingTime"],
+        peakTaskUserMemory=raw_metrics["statistics"].get("peakTaskUserMemory"),
+        peakTaskTotalMemory=raw_metrics["statistics"].get("peakTaskTotalMemory"),
+        physicalInputBytes=raw_metrics["statistics"].get("physicalInputBytes"),
+        physicalInputRows=raw_metrics["statistics"].get("physicalInputRows"),
+        internalNetworkBytes=raw_metrics["statistics"].get("internalNetworkBytes"),
+        internalNetworkRows=raw_metrics["statistics"].get("internalNetworkRows"),
+        totalBytes=raw_metrics["statistics"].get("totalBytes"),
+        totalRows=raw_metrics["statistics"].get("totalRows"),
+        outputBytes=raw_metrics["statistics"].get("outputBytes"),
+        outputRows=raw_metrics["statistics"].get("outputRows"),
+        writtenBytes=raw_metrics["statistics"].get("writtenBytes"),
+        writtenRows=raw_metrics["statistics"].get("writtenRows"),
+        processedInputBytes=raw_metrics["statistics"].get("processedInputBytes"),
+        processedInputRows=raw_metrics["statistics"].get("processedInputRows"),
+        cumulativeMemory=raw_metrics["statistics"].get("cumulativeMemory"),
+        completedSplits=raw_metrics["statistics"].get("completedSplits"),
+        resourceWaitingTime=raw_metrics["statistics"].get("resourceWaitingTime"),
+        planNodeStatsAndCosts=_load_json(raw_metrics["statistics"].get("planNodeStatsAndCosts")),
         createTime=_get_datetime_from_field(raw_metrics["createTime"]),
         executionStartTime=_get_datetime_from_field(raw_metrics["executionStartTime"]),
         endTime=_get_datetime_from_field(raw_metrics["endTime"]),
@@ -171,12 +272,39 @@ def get_column_metrics_from_raw(raw_metrics: dict[str, Any]) -> list[ColumnMetri
             schemaName=table["schema"],
             tableName=table["table"],
             columnName=column,
-            physicalInputBytes=table["physicalInputBytes"],
-            physicalInputRows=table["physicalInputRows"],
+            physicalInputBytes=table.get("physicalInputBytes"),
+            physicalInputRows=table.get("physicalInputRows"),
         )
-        for table in raw_metrics["ioMetadata"]["inputs"]
+        for table in raw_metrics["ioMetadata"].get("inputs", [])
         for column in table["columns"]
     ]
 
     # Trino may send a column multiple times with the same information
-    return list(dict.fromkeys(column_metrics))
+    return _unique(column_metrics)
+
+
+def get_client_tags_from_raw(raw_metrics: dict[str, Any]) -> list[ClientTags]:
+    client_tags = [
+        ClientTags(queryId=raw_metrics["metadata"]["queryId"], clientTag=client_tag)
+        for client_tag in raw_metrics["context"].get("clientTags", [])
+    ]
+
+    return _unique(client_tags)
+
+
+def get_resource_groups_from_raw(raw_metrics: dict[str, Any]) -> list[ResourceGroups]:
+    resource_groups = [
+        ResourceGroups(queryId=raw_metrics["metadata"]["queryId"], resourceGroup=resource_group)
+        for resource_group in raw_metrics["context"].get("resourceGroupId", [])
+    ]
+
+    return _unique(resource_groups)
+
+
+def get_operator_summaries_from_raw(raw_metrics: dict[str, Any]) -> list[OperatorSummaries]:
+    operator_summaries = [
+        OperatorSummaries(queryId=raw_metrics["metadata"]["queryId"], operatorSummary=_load_json(operator_sumary))
+        for operator_sumary in raw_metrics["statistics"].get("operatorSummaries", [])
+    ]
+
+    return _unique(operator_summaries)

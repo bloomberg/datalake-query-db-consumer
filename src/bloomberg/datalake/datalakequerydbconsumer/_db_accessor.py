@@ -23,7 +23,13 @@ from typing import Any
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from ._data_models import get_column_metrics_from_raw, get_query_metrics_from_raw
+from ._data_models import (
+    get_client_tags_from_raw,
+    get_column_metrics_from_raw,
+    get_operator_summaries_from_raw,
+    get_query_metrics_from_raw,
+    get_resource_groups_from_raw,
+)
 
 POSTGRES_DB_URL = os.environ.get("DATALAKEQUERYDBCONSUMER_DB_URL")
 
@@ -42,4 +48,25 @@ def _add_column_metrics(raw_metrics: dict[str, Any]) -> None:
     column_metrics = get_column_metrics_from_raw(raw_metrics)
     with Session() as session:
         session.add_all(column_metrics)
+        session.commit()
+
+
+def _add_client_tags(raw_metrics: dict[str, Any]) -> None:
+    client_tags = get_client_tags_from_raw(raw_metrics)
+    with Session() as session:
+        session.add_all(client_tags)
+        session.commit()
+
+
+def _add_resource_groups(raw_metrics: dict[str, Any]) -> None:
+    resource_groups = get_resource_groups_from_raw(raw_metrics)
+    with Session() as session:
+        session.add_all(resource_groups)
+        session.commit()
+
+
+def _add_operator_summaries(raw_metrics: dict[str, Any]) -> None:
+    operator_summaries = get_operator_summaries_from_raw(raw_metrics)
+    with Session() as session:
+        session.add_all(operator_summaries)
         session.commit()

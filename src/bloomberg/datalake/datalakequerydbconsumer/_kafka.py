@@ -27,7 +27,13 @@ from typing import Any, Callable
 from confluent_kafka import Consumer, KafkaError, KafkaException
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from ._db_accessor import _add_column_metrics, _add_query_metrics
+from ._db_accessor import (
+    _add_client_tags,
+    _add_column_metrics,
+    _add_operator_summaries,
+    _add_query_metrics,
+    _add_resource_groups,
+)
 
 KAFKA_BROKERS = os.getenv("KAFKA_BROKERS")
 KAFKA_TOPIC = os.getenv("DATALAKEQUERYDBCONSUMER_KAFKA_TOPIC")
@@ -114,6 +120,9 @@ class KafkaConsumer:
             _raw_metrics = json.loads(message.value())
             _add_query_metrics(_raw_metrics)
             _add_column_metrics(_raw_metrics)
+            _add_client_tags(_raw_metrics)
+            _add_resource_groups(_raw_metrics)
+            _add_operator_summaries(_raw_metrics)
         except (ValueError, TypeError, JSONDecodeError) as ex:
             # Can't fix a badly formated message
             logging.exception(ex)
