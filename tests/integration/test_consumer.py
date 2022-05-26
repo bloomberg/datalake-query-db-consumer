@@ -41,6 +41,8 @@ from bloomberg.datalake.datalakequerydbconsumer._kafka import KafkaConsumer
 from .._utils import get_raw_metrics, get_raw_metrics_with_output_sources
 from ._kafka import KafkaProducer
 
+logger = logging.getLogger(__name__)
+
 DB_URL = os.environ.get("DATALAKEQUERYDBCONSUMER_DB_URL")
 
 engine = create_engine(DB_URL)
@@ -108,7 +110,7 @@ def test_consumer(producer, consumer_queue: Queue, session):
     producer.enqueue_message(json.dumps(_raw_metrics).encode("utf-8"), _query_id)
 
     while (_message_key := consumer_queue.get().key()).decode("utf-8") != _query_id:
-        logging.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
+        logger.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
         consumer_queue.task_done()
     else:
         consumer_queue.task_done()
@@ -287,7 +289,7 @@ def test_fail_to_parse_saves_failed_event(producer, consumer_queue: Queue, sessi
 
     # Consummer will raise an Exception when proccessing
     while (_message_key := consumer_queue.get().key()).decode("utf-8") != _query_id:
-        logging.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
+        logger.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
         consumer_queue.task_done()
     else:
         consumer_queue.task_done()
@@ -311,7 +313,7 @@ def test_consumer_with_output_sources(producer, consumer_queue: Queue, session):
 
     # Consummer will raise an Exception when proccessing
     while (_message_key := consumer_queue.get().key()).decode("utf-8") != _query_id:
-        logging.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
+        logger.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
         consumer_queue.task_done()
     else:
         consumer_queue.task_done()

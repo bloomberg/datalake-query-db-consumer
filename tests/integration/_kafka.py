@@ -23,6 +23,8 @@ from typing import Any
 
 from confluent_kafka import KafkaError, KafkaException, Producer
 
+logger = logging.getLogger(__name__)
+
 KAFKA_BROKERS = os.getenv("KAFKA_BROKERS")
 KAFKA_TOPIC = os.getenv("DATALAKEQUERYDBCONSUMER_KAFKA_TOPIC")
 
@@ -42,29 +44,30 @@ class KafkaProducer:
         }
 
         self._producer = Producer(conf)
-        logging.debug("Created producer")
+        logger.debug("Created producer")
 
     def enqueue_message(self, message: bytes, key: bytes) -> None:
         try:
-            logging.debug("Producing message: %s", message)
+            logger.debug("Producing message: %s", message)
             self._producer.produce(self._topic, message, key=key, callback=self._delivery_callback, partition=0)
         except KafkaException as e:
             if e.args[0].fatal():
-                logging.fatal(
-                    f"ABORTING: Fatal confluent_kafka error caught on produce: {e}",
+                logger.fatal(
+                    "ABORTING: Fatal confluent_kafka error caught on produce: %s",
+                    e,
                     exc_info=True,
                 )
                 raise
             else:
-                logging.error(f"Produce failed: {e}", exc_info=True)
+                logger.error("Produce failed: %s", e, exc_info=True)
 
         not_flushed = self._producer.flush(10)
         if not_flushed > 0:
-            raise KafkaError(f"KafkaProducer timed out with {not_flushed} messages not flushed")
+            raise KafkaError("KafkaProducer timed out with %s messages not flushed", not_flushed)
 
     def _delivery_callback(self, err: Any, msg: Any) -> None:
         if err:
-            logging.error(
+            logger.error(
                 "Message delivery successful for Message"
                 + "[ length = %s bytes, topic = %s, partition = %s, key = %s ]: %s",
                 len(msg),
@@ -74,7 +77,7 @@ class KafkaProducer:
                 err,
             )
         else:
-            logging.debug(
+            logger.debug(
                 "Message delivery successful for Message"
                 + "[ length = %s bytes, topic = %s, partition = %s, key = %s, offset = %s, timestamp = %s UTC ]",
                 len(msg),
@@ -87,4 +90,4 @@ class KafkaProducer:
 
     def close(self) -> None:
         self._producer = None  # type: ignore
-        logging.info("Closing producer")
+        logger.info("Closing producer")
