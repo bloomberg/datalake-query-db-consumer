@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from base64 import b64encode
 from threading import Event
 from typing import Any, Callable
 
@@ -36,6 +37,8 @@ from ._db_accessor import (
     _add_resource_groups,
 )
 
+logger = logging.getLogger(__name__)
+
 KAFKA_BROKERS = os.getenv("KAFKA_BROKERS")
 KAFKA_TOPIC = os.getenv("DATALAKEQUERYDBCONSUMER_KAFKA_TOPIC")
 KAFKA_GROUP_ID = os.getenv("DATALAKEQUERYDBCONSUMER_KAFKA_GROUP_ID")
@@ -45,10 +48,10 @@ class KafkaConsumer:
     def __init__(self, stop_event: Event | None = None, post_message_hook: Callable[[Any], None] | None = None) -> None:
         _config = self._get_config()
         self._consumer = Consumer(_config)
-        logging.debug("Using Kafka Consumer configuration\n%s", self._get_config())
+        logger.debug("Using Kafka Consumer configuration\n%s", self._get_config())
 
         self._consumer.subscribe([KAFKA_TOPIC])
-        logging.debug("Subscribing Kafka Consumer to topic %s", KAFKA_TOPIC)
+        logger.debug("Subscribing Kafka Consumer to topic %s", KAFKA_TOPIC)
 
         self._post_message_hook = post_message_hook
 
@@ -67,20 +70,23 @@ class KafkaConsumer:
                     continue
                 elif message.error():
                     if message.error().fatal():
-                        logging.error(f"ABORTING: Fatal confluent_kafka error caught on consume: {message.error()}")
+                        logger.error("ABORTING: Fatal confluent_kafka error caught on consume: %s", message.error())
                         raise KafkaException(message.error())
                     elif message.error().code() == KafkaError.UNKNOWN_TOPIC_OR_PART:
-                        logging.error(f"Permanent consumer error: {message.error()}")
+                        logger.error("Permanent consumer error: %s", message.error())
                     else:
-                        logging.warn(f"Non-critical consume event: {message.error()}")
+                        logger.warn("Non-critical consume event: %s", message.error())
                 else:
-                    self._handle_message(message)
-
-                    if self._post_message_hook is not None:
-                        self._post_message_hook(message)
+                    try:
+                        self._handle_message(message)
+                    except Exception as e:
+                        raise e
+                    finally:
+                        if self._post_message_hook is not None:
+                            self._post_message_hook(message)
 
             except Exception:
-                logging.exception("Caught exception while listening for messages")
+                logger.exception("Caught exception while listening for messages")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -105,7 +111,7 @@ class KafkaConsumer:
             Else it becomes non-revocable
         3. Non-revocable error - Add retry information to failed table
         """
-        logging.debug(
+        logger.debug(
             "Received Message"
             + "[ length = %s bytes, topic = %s, partition = %s, key = %s, offset = %s, timestamp = %s UTC ]",
             len(message),
@@ -118,21 +124,48 @@ class KafkaConsumer:
 
         try:
             _raw_metrics = json.loads(message.value())
-            logging.debug("Loaded message from string")
-            _add_query_metrics(_raw_metrics)
-            logging.debug("Saved message query metrics")
-            _add_column_metrics(_raw_metrics)
-            logging.debug("Saved message column metrics")
-            _add_client_tags(_raw_metrics)
-            logging.debug("Saved message client tags")
-            _add_resource_groups(_raw_metrics)
-            logging.debug("Saved message resource groups")
-            _add_operator_summaries(_raw_metrics)
-            logging.debug("Saved message operator summaries")
-            _add_output_columns(_raw_metrics)
-            logging.debug("Saved message output columns")
-            _add_output_column_sources(_raw_metrics)
-            logging.debug("Saved message output columns sources")
+            _query_id = _raw_metrics["metadata"]["queryId"]
         except Exception:
-            logging.exception("Caught exception while processing metrics")
-            _add_failed_event(message.value())
+            logger.exception("Caught exception while parsing metrics")
+            try:
+                _add_failed_event(message.value())
+            except Exception:
+                logger.exception("Caught exception while handling failed event")
+                logger.warning(
+                    "Event could not be saved in failed_events, logging in base64: %s",
+                    b64encode(message.value()).decode("utf-8"),
+                )
+            return
+
+        try:
+            _add_query_metrics(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message query metrics", _query_id)
+
+            _add_column_metrics(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message column metrics", _query_id)
+
+            _add_client_tags(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message client tags", _query_id)
+
+            _add_resource_groups(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message resource groups", _query_id)
+
+            _add_operator_summaries(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message operator summaries", _query_id)
+
+            _add_output_columns(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message output columns", _query_id)
+
+            _add_output_column_sources(_raw_metrics)
+            logger.debug("(queryId=%s) Saved message output columns sources", _query_id)
+        except Exception:
+            logger.exception("(queryId=%s) Caught exception while processing metrics", _query_id)
+            try:
+                _add_failed_event(message.value())
+            except Exception:
+                logger.exception("(queryId=%s) Caught exception while handling failed event", _query_id)
+                logger.warning(
+                    "(queryId=%s) Event could not be saved in failed_events, logging in base64: %s",
+                    _query_id,
+                    b64encode(message.value()).decode("utf-8"),
+                )
