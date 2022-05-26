@@ -27,6 +27,8 @@ from bloomberg.datalake.datalakequerydbconsumer._data_models import (
     ColumnMetrics,
     FailedEvent,
     OperatorSummaries,
+    OutputColumn,
+    OutputColumnSource,
     QueryMetrics,
     ResourceGroups,
 )
@@ -35,11 +37,13 @@ from bloomberg.datalake.datalakequerydbconsumer._db_accessor import (
     _add_column_metrics,
     _add_failed_event,
     _add_operator_summaries,
+    _add_output_column_sources,
+    _add_output_columns,
     _add_query_metrics,
     _add_resource_groups,
 )
 
-from .._utils import get_raw_metrics
+from .._utils import get_raw_metrics, get_raw_metrics_with_no_sources, get_raw_metrics_with_output_sources
 
 DB_URL = os.environ.get("DATALAKEQUERYDBCONSUMER_DB_URL")
 
@@ -58,6 +62,8 @@ def _cleanup(session: Session):
 
     yield
 
+    session.query(OutputColumnSource).delete()
+    session.query(OutputColumn).delete()
     session.query(ClientTags).delete()
     session.query(ResourceGroups).delete()
     session.query(OperatorSummaries).delete()
@@ -422,3 +428,60 @@ def test_add_failed_event(session: Session):
     assert result.id is not None
     assert result.event == _event
     assert result.createTime is not None
+
+
+@pytest.mark.usefixtures("_cleanup")
+def test_add_output_columns(session: Session):
+    # Given
+    (_query_id, _raw_metrics) = get_raw_metrics_with_no_sources()
+
+    # When
+    _add_query_metrics(_raw_metrics)  # Needed for FK
+    _add_output_columns(_raw_metrics)
+
+    # Then
+    results = session.query(OutputColumn).all()
+
+    assert len(results) == 5
+
+    for result in results:
+        assert result.queryId == _query_id
+        assert result.catalogName == "hive"
+        assert result.schemaName == "s"
+        assert result.tableName == "t"
+
+    column_names = [result.columnName for result in results]
+    expected_column_names = ["view_time", "user_id", "page_url", "ds", "country"]
+    assert len(column_names) == len(expected_column_names)
+    assert sorted(column_names) == sorted(expected_column_names)
+
+
+@pytest.mark.usefixtures("_cleanup")
+def test_add_output_column_sources(session: Session):
+    # Given
+    (_query_id, _raw_metrics) = get_raw_metrics_with_output_sources()
+
+    # When
+    _add_query_metrics(_raw_metrics)
+    _add_output_columns(_raw_metrics)
+    _add_output_column_sources(_raw_metrics)
+
+    # Then
+    results = session.query(OutputColumnSource).order_by(OutputColumnSource.sourceColumnName.asc()).all()
+
+    assert len(results) == 2
+
+    for result in results:
+        assert result.queryId == _query_id
+        assert result.catalogName == "hive"
+        assert result.schemaName == "s"
+        assert result.tableName == "t1"
+        assert result.sourceCatalogName == "hive"
+        assert result.sourceSchemaName == "s"
+        assert result.sourceTableName == "t"
+
+    assert results[0].columnName == "country"
+    assert results[0].sourceColumnName == "country"
+
+    assert results[1].columnName == "page_url"
+    assert results[1].sourceColumnName == "page_url"

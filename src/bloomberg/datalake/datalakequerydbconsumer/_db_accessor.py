@@ -30,6 +30,8 @@ from ._data_models import (
     get_client_tags_from_raw,
     get_column_metrics_from_raw,
     get_operator_summaries_from_raw,
+    get_output_column_sources_from_raw,
+    get_output_columns_from_raw,
     get_query_metrics_from_raw,
     get_resource_groups_from_raw,
 )
@@ -67,6 +69,10 @@ _add_client_tags = __create_add_function(get_client_tags_from_raw)
 _add_resource_groups = __create_add_function(get_resource_groups_from_raw)
 
 _add_operator_summaries = __create_add_function(get_operator_summaries_from_raw)
+
+_add_output_columns = __create_add_function(get_output_columns_from_raw)
+
+_add_output_column_sources = __create_add_function(get_output_column_sources_from_raw)
 
 
 def _add_failed_event(event: Any) -> None:
