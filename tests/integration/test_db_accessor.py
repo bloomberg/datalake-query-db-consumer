@@ -25,6 +25,7 @@ from sqlalchemy.orm.session import Session, sessionmaker
 from bloomberg.datalake.datalakequerydbconsumer._data_models import (
     ClientTags,
     ColumnMetrics,
+    FailedEvent,
     OperatorSummaries,
     QueryMetrics,
     ResourceGroups,
@@ -32,6 +33,7 @@ from bloomberg.datalake.datalakequerydbconsumer._data_models import (
 from bloomberg.datalake.datalakequerydbconsumer._db_accessor import (
     _add_client_tags,
     _add_column_metrics,
+    _add_failed_event,
     _add_operator_summaries,
     _add_query_metrics,
     _add_resource_groups,
@@ -61,6 +63,7 @@ def _cleanup(session: Session):
     session.query(OperatorSummaries).delete()
     session.query(ColumnMetrics).delete()
     session.query(QueryMetrics).delete()
+    session.query(FailedEvent).delete()
     session.commit()
 
 
@@ -402,3 +405,20 @@ def test_add_operator_summaries(session: Session):
     assert result[3].operatorSummary["pipelineId"] == 0
     assert result[3].operatorSummary["operatorId"] == 1
     assert result[3].operatorSummary["planNodeId"] == "0"
+
+
+@pytest.mark.usefixtures("_cleanup")
+def test_add_failed_event(session: Session):
+    # Given
+    _event = '{"metadata": {"queryId": "1234", "query": "select * from table"}}'
+
+    # When
+    _add_failed_event(_event)
+
+    # Then
+    result = session.query(FailedEvent).first()
+
+    assert result is not None
+    assert result.id is not None
+    assert result.event == _event
+    assert result.createTime is not None

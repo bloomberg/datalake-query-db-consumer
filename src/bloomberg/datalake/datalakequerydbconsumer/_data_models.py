@@ -22,7 +22,7 @@ from json import loads
 from typing import Any, TypeVar, cast
 
 from dateutil import parser
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, UnicodeText
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, UnicodeText, func
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.schema import ForeignKey
 from sqlalchemy.sql.sqltypes import BigInteger
@@ -172,6 +172,17 @@ class OperatorSummaries(Base):  # type: ignore
 
     def __hash__(self) -> int:
         return hash(frozenset([self.queryId, self.id]))
+
+
+class FailedEvent(Base):  # type: ignore
+
+    __tablename__ = "failed_events"
+
+    id = Column("id", BigInteger, autoincrement=True, primary_key=True)
+    event = Column("event", UnicodeText, nullable=False)
+    createTime = Column("createTime", DateTime, nullable=False, default=func.now())
+
+    __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
 
 
 def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:

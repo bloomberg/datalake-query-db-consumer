@@ -20,16 +20,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-from json.decoder import JSONDecodeError
 from threading import Event
 from typing import Any, Callable
 
 from confluent_kafka import Consumer, KafkaError, KafkaException
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from ._db_accessor import (
     _add_client_tags,
     _add_column_metrics,
+    _add_failed_event,
     _add_operator_summaries,
     _add_query_metrics,
     _add_resource_groups,
@@ -78,10 +77,8 @@ class KafkaConsumer:
                     if self._post_message_hook is not None:
                         self._post_message_hook(message)
 
-                    self._consumer.store_offsets(message=message)
-
-            except Exception as e:
-                logging.exception(e)
+            except Exception:
+                logging.exception("Caught exception while listening for messages")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -90,7 +87,7 @@ class KafkaConsumer:
         return {
             "metadata.broker.list": KAFKA_BROKERS,
             "client.id": "datalakequerydbconsumer",
-            "enable.auto.offset.store": False,
+            "enable.auto.offset.store": True,
             "log.connection.close": False,
             "enable.partition.eof": False,
             "group.id": KAFKA_GROUP_ID,
@@ -99,11 +96,12 @@ class KafkaConsumer:
 
     def _handle_message(self, message: Any) -> None:
         """
-        Handles an incoming message.
-        If this function return normally it is considered that the message has been
-        processed successfully and will be commited.
-        If this function raises any exception the message is considered unprocessed and
-        offsets will not be commited.
+        Handles an incoming message with 3 cases:
+        1. Message is proccessed successfully - Great! Commit and move on
+        2. Revocable error is raised - If current retry < max retries
+            add the same message to the queue, incrementing the retry count.
+            Else it becomes non-revocable
+        3. Non-revocable error - Add retry information to failed table
         """
         logging.debug(
             "Received Message"
@@ -118,19 +116,17 @@ class KafkaConsumer:
 
         try:
             _raw_metrics = json.loads(message.value())
+            logging.debug("Loaded message from string")
             _add_query_metrics(_raw_metrics)
+            logging.debug("Saved message query metrics")
             _add_column_metrics(_raw_metrics)
+            logging.debug("Saved message column metrics")
             _add_client_tags(_raw_metrics)
+            logging.debug("Saved message client tags")
             _add_resource_groups(_raw_metrics)
+            logging.debug("Saved message resource groups")
             _add_operator_summaries(_raw_metrics)
-        except (ValueError, TypeError, JSONDecodeError) as ex:
-            # Can't fix a badly formated message
-            logging.exception(ex)
-        except OperationalError as ex:
-            # Operational errors are errors related to the database itself,
-            # and can be caused by timeouts or temporary unavailability.
-            # Its worth retrying on these.
-            raise ex
-        except SQLAlchemyError as ex:
-            # These are usually problems related to grammar or insertions, not fixable
-            logging.exception(ex)
+            logging.debug("Saved message operator summaries")
+        except Exception:
+            logging.exception("Caught exception while processing metrics")
+            _add_failed_event(message.value())

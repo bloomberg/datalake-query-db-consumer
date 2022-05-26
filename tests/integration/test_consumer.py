@@ -23,13 +23,13 @@ from queue import Queue
 from threading import Event, Thread
 
 import pytest
-from confluent_kafka import KafkaException
 from sqlalchemy.engine import create_engine
 from sqlalchemy.orm.session import Session, sessionmaker
 
 from bloomberg.datalake.datalakequerydbconsumer._data_models import (
     ClientTags,
     ColumnMetrics,
+    FailedEvent,
     OperatorSummaries,
     QueryMetrics,
     ResourceGroups,
@@ -67,29 +67,6 @@ def consumer_queue():
 
 
 @pytest.fixture()
-def bad_handle_consumer():
-    queue = Queue()
-    _stop_event = Event()
-
-    def _post_message_hook(message):
-        _stop_event.set()
-        queue.put(message)
-        raise Exception("Emulate a processing error")
-
-    _consumer = KafkaConsumer(_stop_event, _post_message_hook)
-    _thread = Thread(target=_consumer.run)
-    _thread.start()
-
-    yield (queue, _consumer._consumer)
-
-    queue.join()
-    queue = None
-
-    _stop_event.set()
-    _thread.join()
-
-
-@pytest.fixture()
 def session():
     Session = sessionmaker(bind=engine)
     with Session() as ses:
@@ -106,6 +83,7 @@ def _cleanup(session: Session):
     session.query(OperatorSummaries).delete()
     session.query(ColumnMetrics).delete()
     session.query(QueryMetrics).delete()
+    session.query(FailedEvent).delete()
     session.commit()
 
 
@@ -269,19 +247,51 @@ def test_consumer(producer, consumer_queue: Queue, session):
     assert result[3].operatorSummary["planNodeId"] == "0"
 
 
-def test_fail_to_handle_dosent_commit(producer, bad_handle_consumer):
+@pytest.mark.usefixtures("_cleanup")
+def test_fail_to_handle_saves_failed_event(producer, consumer_queue: Queue, session):
     # Given
-    (_query_id, _raw_metrics) = get_raw_metrics()
-    (_bad_handle_consumer_queue, _consumer) = bad_handle_consumer
+    _query_id = "123"
+    _event = '{"metadata": {"queryId": "1234", "query": "select * from table"}}'
 
     # When
-    producer.enqueue_message(json.dumps(_raw_metrics).encode("utf-8"), _query_id)
+    producer.enqueue_message(_event, _query_id)
 
-    # Consumer throws an exception when it handles a message
-    # This should mean that it can't commit the message
-    _bad_handle_consumer_queue.get()
-    _bad_handle_consumer_queue.task_done()
+    # Consummer will raise an Exception when proccessing
+    while (_message_key := consumer_queue.get().key()).decode("utf-8") != _query_id:
+        logging.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
+        consumer_queue.task_done()
+    else:
+        consumer_queue.task_done()
 
     # Then
-    with pytest.raises(KafkaException, match=".*_NO_OFFSET.*"):
-        _consumer.commit(asynchronous=False)
+    result = session.query(FailedEvent).first()
+
+    assert result is not None
+    assert result.id is not None
+    assert result.event == _event
+    assert result.createTime is not None
+
+
+@pytest.mark.usefixtures("_cleanup")
+def test_fail_to_parse_saves_failed_event(producer, consumer_queue: Queue, session):
+    # Given
+    _query_id = "123"
+    _event = "im_not_json"
+
+    # When
+    producer.enqueue_message(_event, _query_id)
+
+    # Consummer will raise an Exception when proccessing
+    while (_message_key := consumer_queue.get().key()).decode("utf-8") != _query_id:
+        logging.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
+        consumer_queue.task_done()
+    else:
+        consumer_queue.task_done()
+
+    # Then
+    result = session.query(FailedEvent).first()
+
+    assert result is not None
+    assert result.id is not None
+    assert result.event == _event
+    assert result.createTime is not None

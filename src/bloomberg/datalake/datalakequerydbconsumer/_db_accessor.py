@@ -18,12 +18,15 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from tenacity import retry, stop, wait
 
 from ._data_models import (
+    Base,
+    FailedEvent,
     get_client_tags_from_raw,
     get_column_metrics_from_raw,
     get_operator_summaries_from_raw,
@@ -31,42 +34,45 @@ from ._data_models import (
     get_resource_groups_from_raw,
 )
 
-POSTGRES_DB_URL = os.environ.get("DATALAKEQUERYDBCONSUMER_DB_URL")
+DB_URL = os.environ.get("DATALAKEQUERYDBCONSUMER_DB_URL")
 
-engine = create_engine(POSTGRES_DB_URL)
+engine = create_engine(DB_URL)
 Session = sessionmaker(bind=engine)
 
 
-def _add_query_metrics(raw_metrics: dict[str, Any]) -> None:
-    query_metrics = get_query_metrics_from_raw(raw_metrics)
+@retry(stop=stop.stop_after_attempt(4), wait=wait.wait_exponential(multiplier=1, min=1, max=10))
+def __commit_db_model(db_model: Base | list[Base]) -> None:
     with Session() as session:
-        session.add(query_metrics)
+        if isinstance(db_model, list):
+            session.add_all(db_model)
+        else:
+            session.add(db_model)
         session.commit()
 
 
-def _add_column_metrics(raw_metrics: dict[str, Any]) -> None:
-    column_metrics = get_column_metrics_from_raw(raw_metrics)
-    with Session() as session:
-        session.add_all(column_metrics)
-        session.commit()
+def __create_add_function(parser: Callable[[dict[str, Any]], Base | list[Base]]) -> Callable[[dict[str, Any]], None]:
+    def __func(raw_metrics: dict[str, Any]) -> None:
+        db_model = parser(raw_metrics)
+        __commit_db_model(db_model)
+
+    return __func
 
 
-def _add_client_tags(raw_metrics: dict[str, Any]) -> None:
-    client_tags = get_client_tags_from_raw(raw_metrics)
-    with Session() as session:
-        session.add_all(client_tags)
-        session.commit()
+_add_query_metrics = __create_add_function(get_query_metrics_from_raw)
+
+_add_column_metrics = __create_add_function(get_column_metrics_from_raw)
+
+_add_client_tags = __create_add_function(get_client_tags_from_raw)
+
+_add_resource_groups = __create_add_function(get_resource_groups_from_raw)
+
+_add_operator_summaries = __create_add_function(get_operator_summaries_from_raw)
 
 
-def _add_resource_groups(raw_metrics: dict[str, Any]) -> None:
-    resource_groups = get_resource_groups_from_raw(raw_metrics)
-    with Session() as session:
-        session.add_all(resource_groups)
-        session.commit()
-
-
-def _add_operator_summaries(raw_metrics: dict[str, Any]) -> None:
-    operator_summaries = get_operator_summaries_from_raw(raw_metrics)
-    with Session() as session:
-        session.add_all(operator_summaries)
-        session.commit()
+def _add_failed_event(event: Any) -> None:
+    if isinstance(event, bytes):
+        __commit_db_model(FailedEvent(event=event.decode("utf-8")))
+    elif isinstance(event, str):
+        __commit_db_model(FailedEvent(event=event))
+    else:
+        __commit_db_model(FailedEvent(event=str(event)))
