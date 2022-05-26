@@ -22,7 +22,7 @@ from json import loads
 from typing import Any, TypeVar, cast
 
 from dateutil import parser
-from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, UnicodeText, func
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKeyConstraint, Integer, String, UnicodeText, func
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.schema import ForeignKey
 from sqlalchemy.sql.sqltypes import BigInteger
@@ -185,6 +185,106 @@ class FailedEvent(Base):  # type: ignore
     __table_args__ = {"extend_existing": True, "schema": "raw_metrics"}
 
 
+class OutputColumn(Base):  # type: ignore
+
+    __tablename__ = "output_columns"
+
+    queryId = Column("queryId", String(100), primary_key=True)
+    catalogName = Column("catalogName", String(100), primary_key=True)
+    schemaName = Column("schemaName", String(100), primary_key=True)
+    tableName = Column("tableName", String(100), primary_key=True)
+    columnName = Column("columnName", String(100), primary_key=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint([queryId], [QueryMetrics.queryId]),
+        {"extend_existing": True, "schema": "raw_metrics"},
+    )
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, OutputColumn):
+            return False
+        return cast(
+            bool,
+            self.queryId == other.queryId
+            and self.catalogName == other.catalogName
+            and self.schemaName == other.schemaName
+            and self.tableName == other.tableName
+            and self.columnName == other.columnName,
+        )
+
+    def __hash__(self) -> int:
+        return hash(frozenset([self.queryId, self.catalogName, self.schemaName, self.tableName, self.columnName]))
+
+
+class OutputColumnSource(Base):  # type: ignore
+
+    __tablename__ = "output_column_sources"
+
+    id = Column("id", BigInteger, autoincrement=True, primary_key=True)
+    queryId = Column("queryId", String(100), primary_key=True)
+    catalogName = Column("catalogName", String(100), primary_key=True)
+    schemaName = Column("schemaName", String(100), primary_key=True)
+    tableName = Column("tableName", String(100), primary_key=True)
+    columnName = Column("columnName", String(100), primary_key=True)
+    sourceCatalogName = Column("sourceCatalogName", String(100))
+    sourceSchemaName = Column("sourceSchemaName", String(100))
+    sourceTableName = Column("sourceTableName", String(100))
+
+    sourceColumnName = Column("sourceColumnName", String(100))
+    __table_args__ = (
+        ForeignKeyConstraint(
+            [
+                queryId,
+                catalogName,
+                schemaName,
+                tableName,
+                columnName,
+            ],
+            [
+                OutputColumn.queryId,
+                OutputColumn.catalogName,
+                OutputColumn.schemaName,
+                OutputColumn.tableName,
+                OutputColumn.columnName,
+            ],
+        ),
+        {"extend_existing": True, "schema": "raw_metrics"},
+    )
+
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, OutputColumnSource):
+            return False
+        return cast(
+            bool,
+            self.queryId == other.queryId
+            and self.catalogName == other.catalogName
+            and self.schemaName == other.schemaName
+            and self.tableName == other.tableName
+            and self.columnName == other.columnName
+            and self.sourceCatalogName == other.sourceCatalogName
+            and self.sourceSchemaName == other.sourceSchemaName
+            and self.sourceTableName == other.sourceTableName
+            and self.sourceColumnName == other.sourceColumnName,
+        )
+
+    def __hash__(self) -> int:
+        return hash(
+            frozenset(
+                [
+                    self.queryId,
+                    self.catalogName,
+                    self.schemaName,
+                    self.tableName,
+                    self.columnName,
+                    self.sourceCatalogName,
+                    self.sourceSchemaName,
+                    self.sourceTableName,
+                    self.sourceColumnName,
+                ]
+            )
+        )
+
+
 def _get_datetime_from_field(field: str | int | float | datetime) -> datetime:
     if isinstance(field, float):
         return datetime.fromtimestamp(field)
@@ -319,3 +419,52 @@ def get_operator_summaries_from_raw(raw_metrics: dict[str, Any]) -> list[Operato
     ]
 
     return _unique(operator_summaries)
+
+
+def get_failed_event_from_raw(raw_metrics: dict[str, Any]) -> FailedEvent:
+    return FailedEvent(event=raw_metrics)
+
+
+def get_output_columns_from_raw(raw_metrics: dict[str, Any]) -> list[OutputColumn]:
+    if "output" not in raw_metrics["ioMetadata"]:
+        return []
+
+    output = raw_metrics["ioMetadata"]["output"]
+
+    output_columns = [
+        OutputColumn(
+            queryId=raw_metrics["metadata"]["queryId"],
+            catalogName=output["catalogName"],
+            schemaName=output["schema"],
+            tableName=output["table"],
+            columnName=column["columnName"],
+        )
+        for column in output.get("columns", [])
+    ]
+
+    return _unique(output_columns)
+
+
+def get_output_column_sources_from_raw(raw_metrics: dict[str, Any]) -> list[OutputColumnSource]:
+    if "output" not in raw_metrics["ioMetadata"]:
+        return []
+
+    output = raw_metrics["ioMetadata"]["output"]
+
+    output_column_sources = [
+        OutputColumnSource(
+            queryId=raw_metrics["metadata"]["queryId"],
+            catalogName=output["catalogName"],
+            schemaName=output["schema"],
+            tableName=output["table"],
+            columnName=column["columnName"],
+            sourceCatalogName=source_column["catalog"],
+            sourceSchemaName=source_column["schema"],
+            sourceTableName=source_column["table"],
+            sourceColumnName=source_column["columnName"],
+        )
+        for column in output.get("columns", [])
+        for source_column in column.get("sourceColumns", [])
+    ]
+
+    return _unique(output_column_sources)

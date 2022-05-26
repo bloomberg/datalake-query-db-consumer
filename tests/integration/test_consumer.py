@@ -31,12 +31,14 @@ from bloomberg.datalake.datalakequerydbconsumer._data_models import (
     ColumnMetrics,
     FailedEvent,
     OperatorSummaries,
+    OutputColumn,
+    OutputColumnSource,
     QueryMetrics,
     ResourceGroups,
 )
 from bloomberg.datalake.datalakequerydbconsumer._kafka import KafkaConsumer
 
-from .._utils import get_raw_metrics
+from .._utils import get_raw_metrics, get_raw_metrics_with_output_sources
 from ._kafka import KafkaProducer
 
 DB_URL = os.environ.get("DATALAKEQUERYDBCONSUMER_DB_URL")
@@ -78,6 +80,8 @@ def _cleanup(session: Session):
 
     yield
 
+    session.query(OutputColumnSource).delete()
+    session.query(OutputColumn).delete()
     session.query(ClientTags).delete()
     session.query(ResourceGroups).delete()
     session.query(OperatorSummaries).delete()
@@ -295,3 +299,56 @@ def test_fail_to_parse_saves_failed_event(producer, consumer_queue: Queue, sessi
     assert result.id is not None
     assert result.event == _event
     assert result.createTime is not None
+
+
+@pytest.mark.usefixtures("_cleanup")
+def test_consumer_with_output_sources(producer, consumer_queue: Queue, session):
+    # Given
+    (_query_id, _raw_metrics) = get_raw_metrics_with_output_sources()
+
+    # When
+    producer.enqueue_message(json.dumps(_raw_metrics).encode("utf-8"), _query_id)
+
+    # Consummer will raise an Exception when proccessing
+    while (_message_key := consumer_queue.get().key()).decode("utf-8") != _query_id:
+        logging.debug("Got _message_key=%s which is not _query_id=%s", _message_key, _query_id)
+        consumer_queue.task_done()
+    else:
+        consumer_queue.task_done()
+
+    # Then
+    # Check OutputColumns
+    results = session.query(OutputColumn).all()
+
+    assert len(results) == 3
+
+    for result in results:
+        assert result.queryId == _query_id
+        assert result.catalogName == "hive"
+        assert result.schemaName == "s"
+        assert result.tableName == "t1"
+
+    column_names = [result.columnName for result in results]
+    expected_column_names = ["cnt", "page_url", "country"]
+    assert len(column_names) == len(expected_column_names)
+    assert sorted(column_names) == sorted(expected_column_names)
+
+    # Check OutputColumnSources
+    results = session.query(OutputColumnSource).order_by(OutputColumnSource.sourceColumnName.asc()).all()
+
+    assert len(results) == 2
+
+    for result in results:
+        assert result.queryId == _query_id
+        assert result.catalogName == "hive"
+        assert result.schemaName == "s"
+        assert result.tableName == "t1"
+        assert result.sourceCatalogName == "hive"
+        assert result.sourceSchemaName == "s"
+        assert result.sourceTableName == "t"
+
+    assert results[0].columnName == "country"
+    assert results[0].sourceColumnName == "country"
+
+    assert results[1].columnName == "page_url"
+    assert results[1].sourceColumnName == "page_url"

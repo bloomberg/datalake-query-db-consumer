@@ -30,6 +30,8 @@ from ._db_accessor import (
     _add_column_metrics,
     _add_failed_event,
     _add_operator_summaries,
+    _add_output_column_sources,
+    _add_output_columns,
     _add_query_metrics,
     _add_resource_groups,
 )
@@ -127,6 +129,10 @@ class KafkaConsumer:
             logging.debug("Saved message resource groups")
             _add_operator_summaries(_raw_metrics)
             logging.debug("Saved message operator summaries")
+            _add_output_columns(_raw_metrics)
+            logging.debug("Saved message output columns")
+            _add_output_column_sources(_raw_metrics)
+            logging.debug("Saved message output columns sources")
         except Exception:
             logging.exception("Caught exception while processing metrics")
             _add_failed_event(message.value())

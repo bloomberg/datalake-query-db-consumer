@@ -22,9 +22,29 @@ from uuid import uuid4
 with open("tests/query_complete_event.json", "r") as f:
     _raw_metrics = loads(f.read())
 
+with open("tests/query_complete_event_output_sources.json", "r") as f:
+    _raw_metrics_with_output_sources = loads(f.read())
+
+with open("tests/query_complete_event_no_sources.json", "r") as f:
+    _raw_metrics_with_no_sources = loads(f.read())
+
 
 def get_raw_metrics():
     _new_raw_metrics = deepcopy(_raw_metrics)
+    _query_id = str(uuid4())
+    _new_raw_metrics["metadata"]["queryId"] = _query_id
+    return (_query_id, _new_raw_metrics)
+
+
+def get_raw_metrics_with_output_sources():
+    _new_raw_metrics = deepcopy(_raw_metrics_with_output_sources)
+    _query_id = str(uuid4())
+    _new_raw_metrics["metadata"]["queryId"] = _query_id
+    return (_query_id, _new_raw_metrics)
+
+
+def get_raw_metrics_with_no_sources():
+    _new_raw_metrics = deepcopy(_raw_metrics_with_no_sources)
     _query_id = str(uuid4())
     _new_raw_metrics["metadata"]["queryId"] = _query_id
     return (_query_id, _new_raw_metrics)
